@@ -158,6 +158,28 @@ func (pg *PostgresDB) Migrate() error {
 		}
 	}
 
+	// Incremental column migrations for existing databases.
+	// PostgreSQL supports ADD COLUMN IF NOT EXISTS natively.
+	columnMigrations := []string{
+		// users: TOTP 2FA columns (added in v2.3.0)
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT FALSE`,
+		// peers: ban columns (added in v2.1.0)
+		`ALTER TABLE peers ADD COLUMN IF NOT EXISTS banned BOOLEAN NOT NULL DEFAULT FALSE`,
+		`ALTER TABLE peers ADD COLUMN IF NOT EXISTS ban_reason TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE peers ADD COLUMN IF NOT EXISTS banned_at TIMESTAMPTZ`,
+		// peers: tags (added in v2.2.0)
+		`ALTER TABLE peers ADD COLUMN IF NOT EXISTS tags TEXT NOT NULL DEFAULT ''`,
+		// peers: heartbeat_seq (added in v2.3.0)
+		`ALTER TABLE peers ADD COLUMN IF NOT EXISTS heartbeat_seq BIGINT NOT NULL DEFAULT 0`,
+	}
+
+	for _, ddl := range columnMigrations {
+		if _, err := pg.pool.Exec(pg.ctx, ddl); err != nil {
+			return fmt.Errorf("db: PostgreSQL column migration failed: %w\nStatement: %s", err, ddl)
+		}
+	}
+
 	return nil
 }
 

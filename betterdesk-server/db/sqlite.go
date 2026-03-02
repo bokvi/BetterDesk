@@ -70,7 +70,6 @@ func (s *SQLiteDB) Migrate() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_peers_uuid ON peers(uuid)`,
 		`CREATE INDEX IF NOT EXISTS idx_peers_status ON peers(status)`,
-		`CREATE INDEX IF NOT EXISTS idx_peers_banned ON peers(banned)`,
 
 		`CREATE TABLE IF NOT EXISTS server_config (
 			key TEXT PRIMARY KEY,
@@ -140,7 +139,73 @@ func (s *SQLiteDB) Migrate() error {
 			return fmt.Errorf("db: migration failed: %w\nStatement: %s", err, stmt)
 		}
 	}
+
+	// Incremental column migrations for existing databases.
+	// SQLite does not support ADD COLUMN IF NOT EXISTS, so we check PRAGMA table_info first.
+	columnMigrations := []struct {
+		table  string
+		column string
+		ddl    string
+	}{
+		// users: TOTP 2FA columns (added in v2.3.0)
+		{"users", "totp_secret", `ALTER TABLE users ADD COLUMN totp_secret TEXT DEFAULT ''`},
+		{"users", "totp_enabled", `ALTER TABLE users ADD COLUMN totp_enabled INTEGER DEFAULT 0`},
+		// peers: ban columns (added in v2.1.0)
+		{"peers", "banned", `ALTER TABLE peers ADD COLUMN banned INTEGER DEFAULT 0`},
+		{"peers", "ban_reason", `ALTER TABLE peers ADD COLUMN ban_reason TEXT DEFAULT ''`},
+		{"peers", "banned_at", `ALTER TABLE peers ADD COLUMN banned_at TEXT DEFAULT NULL`},
+		// peers: tags (added in v2.2.0)
+		{"peers", "tags", `ALTER TABLE peers ADD COLUMN tags TEXT DEFAULT ''`},
+		// peers: heartbeat_seq (added in v2.3.0)
+		{"peers", "heartbeat_seq", `ALTER TABLE peers ADD COLUMN heartbeat_seq INTEGER DEFAULT 0`},
+	}
+
+	for _, m := range columnMigrations {
+		if !s.hasColumn(m.table, m.column) {
+			if _, err := s.db.Exec(m.ddl); err != nil {
+				// Ignore "duplicate column" errors — race-safe
+				if !strings.Contains(err.Error(), "duplicate column") {
+					return fmt.Errorf("db: column migration failed (%s.%s): %w", m.table, m.column, err)
+				}
+			}
+		}
+	}
+
+	// Deferred indexes — created after column migrations to avoid
+	// "no such column" errors on legacy databases.
+	deferredIndexes := []string{
+		`CREATE INDEX IF NOT EXISTS idx_peers_banned ON peers(banned)`,
+	}
+	for _, idx := range deferredIndexes {
+		if _, err := s.db.Exec(idx); err != nil {
+			return fmt.Errorf("db: deferred index failed: %w\nStatement: %s", err, idx)
+		}
+	}
+
 	return nil
+}
+
+// hasColumn checks if a column exists in a table using PRAGMA table_info.
+func (s *SQLiteDB) hasColumn(table, column string) bool {
+	rows, err := s.db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull int
+		var dfltValue sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
+			continue
+		}
+		if strings.EqualFold(name, column) {
+			return true
+		}
+	}
+	return false
 }
 
 // GetPeer returns a peer by ID, or nil if not found.

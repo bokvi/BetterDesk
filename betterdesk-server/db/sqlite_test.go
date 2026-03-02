@@ -326,3 +326,97 @@ func TestHardDelete(t *testing.T) {
 		}
 	}
 }
+
+// TestMigrateUpgradesLegacySchema simulates a database created by an older
+// version (without totp_secret, totp_enabled in users table). Migrate()
+// should add the missing columns so CreateUser and GetUser work correctly.
+func TestMigrateUpgradesLegacySchema(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "legacy.db")
+	db, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer db.Close()
+
+	// Step 1: Create a "legacy" users table WITHOUT totp columns.
+	_, err = db.db.Exec(`CREATE TABLE IF NOT EXISTS users (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		username TEXT UNIQUE NOT NULL,
+		password_hash TEXT NOT NULL,
+		role TEXT NOT NULL DEFAULT 'viewer',
+		created_at TEXT DEFAULT (datetime('now')),
+		last_login TEXT DEFAULT ''
+	)`)
+	if err != nil {
+		t.Fatalf("Create legacy users table: %v", err)
+	}
+
+	// Step 2: Create a "legacy" peers table WITHOUT ban/tags/heartbeat columns.
+	_, err = db.db.Exec(`CREATE TABLE IF NOT EXISTS peers (
+		id TEXT PRIMARY KEY,
+		uuid TEXT DEFAULT '',
+		pk BLOB DEFAULT NULL,
+		ip TEXT DEFAULT '',
+		user TEXT DEFAULT '',
+		hostname TEXT DEFAULT '',
+		os TEXT DEFAULT '',
+		version TEXT DEFAULT '',
+		status TEXT DEFAULT 'OFFLINE',
+		nat_type INTEGER DEFAULT 0,
+		last_online TEXT DEFAULT '',
+		created_at TEXT DEFAULT (datetime('now')),
+		disabled INTEGER DEFAULT 0,
+		soft_deleted INTEGER DEFAULT 0,
+		deleted_at TEXT DEFAULT NULL,
+		note TEXT DEFAULT ''
+	)`)
+	if err != nil {
+		t.Fatalf("Create legacy peers table: %v", err)
+	}
+
+	// Step 3: Run Migrate() — should add missing columns without error.
+	if err := db.Migrate(); err != nil {
+		t.Fatalf("Migrate on legacy schema: %v", err)
+	}
+
+	// Step 4: Verify CreateUser works (uses totp_secret, totp_enabled columns).
+	err = db.CreateUser(&User{
+		Username:     "admin",
+		PasswordHash: "hash123",
+		Role:         "admin",
+		TOTPSecret:   "secret",
+		TOTPEnabled:  true,
+	})
+	if err != nil {
+		t.Fatalf("CreateUser after migration: %v", err)
+	}
+
+	// Step 5: Verify GetUser returns totp fields correctly.
+	u, err := db.GetUser("admin")
+	if err != nil {
+		t.Fatalf("GetUser: %v", err)
+	}
+	if u.TOTPSecret != "secret" {
+		t.Errorf("TOTPSecret: got %q, want %q", u.TOTPSecret, "secret")
+	}
+	if !u.TOTPEnabled {
+		t.Error("TOTPEnabled should be true")
+	}
+
+	// Step 6: Verify peers table has ban columns.
+	db.UpsertPeer(&Peer{ID: "TESTPEER", Status: "ONLINE"})
+	err = db.BanPeer("TESTPEER", "test reason")
+	if err != nil {
+		t.Fatalf("BanPeer after migration: %v", err)
+	}
+	banned, _ := db.IsPeerBanned("TESTPEER")
+	if !banned {
+		t.Error("TESTPEER should be banned after migration")
+	}
+
+	// Step 7: Verify running Migrate() again is idempotent (no errors).
+	if err := db.Migrate(); err != nil {
+		t.Fatalf("Migrate (idempotent): %v", err)
+	}
+}
