@@ -11,7 +11,7 @@
 #     - Validate installation
 #     - Backup & restore
 #     - Reset admin password
-#     - Build custom binaries
+#     - Build & deploy server (rebuild Go binary with rollback)
 #     - Full diagnostics
 #     - SHA256 binary verification
 #     - Auto mode (non-interactive)
@@ -2606,9 +2606,152 @@ EOF
 
 do_build() {
     print_header
-    echo -e "${WHITE}${BOLD}══════════ Build binaries ══════════${NC}"
+    echo -e "${WHITE}${BOLD}══════════ BUILD & DEPLOY ══════════${NC}"
     echo ""
-    
+    echo "  1. 🔨 Rebuild & deploy Go server (compile, stop, replace, start)"
+    echo "  2. 🔨 Compile Go server only (do not deploy)"
+    echo "  3. 🦀 Build legacy Rust binaries (archived, hbbs/hbbr)"
+    echo "  0. ↩️  Back to main menu"
+    echo ""
+    read -p "Select option [1]: " build_choice
+    build_choice="${build_choice:-1}"
+
+    case $build_choice in
+        1) do_rebuild_go_server ;;
+        2) do_compile_go_only ;;
+        3) do_build_legacy_rust ;;
+        0) return ;;
+        *) print_warning "Invalid option"; sleep 1 ;;
+    esac
+}
+
+# Rebuild & deploy Go server: compile → backup → stop → replace → start → verify
+do_rebuild_go_server() {
+    print_header
+    echo -e "${WHITE}${BOLD}══════════ REBUILD & DEPLOY GO SERVER ══════════${NC}"
+    echo ""
+
+    detect_installation
+
+    if [ "$INSTALL_STATUS" = "none" ]; then
+        print_warning "BetterDesk is not installed. Binary will be compiled but not deployed."
+        if ! confirm "Continue with compilation only?"; then
+            press_enter
+            return
+        fi
+        do_compile_go_only
+        return
+    fi
+
+    # Step 1: Compile
+    print_step "[1/5] Compiling Go server from source..."
+    detect_architecture
+
+    if ! compile_go_server; then
+        print_error "Compilation failed — aborting. Current installation is untouched."
+        press_enter
+        return
+    fi
+
+    local new_binary="$GO_SERVER_SOURCE/betterdesk-server"
+    if [ ! -f "$new_binary" ]; then
+        print_error "Compiled binary not found at $new_binary"
+        press_enter
+        return
+    fi
+
+    # Step 2: Backup current binary
+    print_step "[2/5] Backing up current binary..."
+    local installed_binary="$RUSTDESK_PATH/betterdesk-server"
+    local ts
+    ts=$(date +%Y%m%d_%H%M%S)
+    if [ -f "$installed_binary" ]; then
+        cp "$installed_binary" "${installed_binary}.backup.${ts}"
+        print_info "Backup: ${installed_binary}.backup.${ts}"
+    else
+        print_info "No existing binary to backup"
+    fi
+
+    # Step 3: Stop services
+    print_step "[3/5] Stopping services..."
+    graceful_stop_services
+
+    # Step 4: Replace binary
+    print_step "[4/5] Deploying new binary..."
+    mkdir -p "$RUSTDESK_PATH"
+    cp "$new_binary" "$installed_binary"
+    chmod +x "$installed_binary"
+    local size
+    size=$(du -h "$installed_binary" | cut -f1)
+    print_success "Deployed: $installed_binary ($size)"
+
+    # Step 5: Start services and verify
+    print_step "[5/5] Starting services..."
+    start_services_with_verification
+
+    if systemctl is-active --quiet betterdesk-server 2>/dev/null; then
+        echo ""
+        print_success "Go server rebuilt and deployed successfully!"
+        echo ""
+        echo -e "${WHITE}Recent logs:${NC}"
+        journalctl -u betterdesk-server -n 5 --no-pager 2>/dev/null || true
+    else
+        print_error "Service failed to start after rebuild!"
+        echo ""
+        echo -e "${YELLOW}Rolling back to previous binary...${NC}"
+        if [ -f "${installed_binary}.backup.${ts}" ]; then
+            cp "${installed_binary}.backup.${ts}" "$installed_binary"
+            chmod +x "$installed_binary"
+            systemctl start betterdesk-server 2>/dev/null || true
+            sleep 2
+            if systemctl is-active --quiet betterdesk-server 2>/dev/null; then
+                print_success "Rollback successful — previous binary restored"
+            else
+                print_error "Rollback also failed. Check: journalctl -u betterdesk-server -n 50"
+            fi
+        else
+            print_error "No backup to rollback to. Check: journalctl -u betterdesk-server -n 50"
+        fi
+    fi
+
+    press_enter
+}
+
+# Compile Go server only (no deployment)
+do_compile_go_only() {
+    print_header
+    echo -e "${WHITE}${BOLD}══════════ COMPILE GO SERVER ══════════${NC}"
+    echo ""
+
+    detect_architecture
+
+    if ! compile_go_server; then
+        print_error "Compilation failed"
+        press_enter
+        return
+    fi
+
+    local new_binary="$GO_SERVER_SOURCE/betterdesk-server"
+    local size
+    size=$(du -h "$new_binary" | cut -f1)
+    print_success "Binary compiled: $new_binary ($size)"
+    print_info "Use option 7 → 1 to deploy it, or copy manually."
+
+    press_enter
+}
+
+# Legacy Rust build (archived — hbbs/hbbr)
+do_build_legacy_rust() {
+    print_header
+    echo -e "${WHITE}${BOLD}══════════ BUILD LEGACY RUST BINARIES ══════════${NC}"
+    echo ""
+    print_warning "Legacy Rust binaries (hbbs/hbbr) are archived."
+    print_info "The Go server is the current architecture."
+    echo ""
+    if ! confirm "Continue with legacy Rust build anyway?"; then
+        return
+    fi
+
     # Check Rust
     if ! command -v cargo &> /dev/null; then
         print_warning "Rust is not installed!"
@@ -2621,21 +2764,21 @@ do_build() {
             return
         fi
     fi
-    
+
     print_info "Rust: $(cargo --version)"
     echo ""
-    
+
     local build_dir="/tmp/betterdesk_build_$$"
     mkdir -p "$build_dir"
     cd "$build_dir"
-    
+
     print_step "Downloading RustDesk Server sources..."
     git clone --depth 1 --branch 1.1.14 https://github.com/rustdesk/rustdesk-server.git
     cd rustdesk-server
     git submodule update --init --recursive
-    
+
     print_step "Applying BetterDesk modifications..."
-    
+
     # Copy modified sources
     if [ -d "$SCRIPT_DIR/hbbs-patch-v2/src" ]; then
         cp "$SCRIPT_DIR/hbbs-patch-v2/src/main.rs" src/ 2>/dev/null || true
@@ -2648,32 +2791,25 @@ do_build() {
         press_enter
         return
     fi
-    
+
     print_step "Compiling (may take several minutes)..."
     cargo build --release
-    
+
     # Copy results
     print_step "Copying binaries..."
-    
     detect_architecture
     mkdir -p "$SCRIPT_DIR/hbbs-patch-v2"
-    
+
     cp target/release/hbbs "$SCRIPT_DIR/hbbs-patch-v2/hbbs-linux-$ARCH_NAME"
     cp target/release/hbbr "$SCRIPT_DIR/hbbs-patch-v2/hbbr-linux-$ARCH_NAME"
-    
+
     # Cleanup
     cd /
     rm -rf "$build_dir"
-    
-    print_success "Compilation completed!"
+
+    print_success "Legacy Rust compilation completed!"
     print_info "Binaries saved in: $SCRIPT_DIR/hbbs-patch-v2/"
-    
-    echo ""
-    if confirm "Do you want to install the new binaries?"; then
-        install_binaries
-        systemctl restart rustdesksignal rustdeskrelay 2>/dev/null || true
-    fi
-    
+
     press_enter
 }
 
@@ -3455,7 +3591,7 @@ show_menu() {
     echo "  4. ✅ INSTALLATION VALIDATION"
     echo "  5. 💾 Backup"
     echo "  6. 🔐 Reset admin password"
-    echo "  7. 🔨 Build binaries"
+    echo "  7. 🔨 Build & deploy server"
     echo "  8. 📊 DIAGNOSTICS"
     echo "  9. 🗑️  UNINSTALL"
     echo ""

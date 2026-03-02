@@ -11,7 +11,7 @@
       - Validate installation
       - Backup & restore
       - Reset admin password
-      - Build custom binaries
+      - Build & deploy server (rebuild Go binary with rollback)
       - Full diagnostics
       - SHA256 binary verification
       - Auto mode (non-interactive)
@@ -3137,9 +3137,164 @@ function Configure-Paths {
 
 function Do-Build {
     Print-Header
-    Write-Host "========== BUILD BINARIES ==========" -ForegroundColor White
+    Write-Host "========== BUILD & DEPLOY ==========" -ForegroundColor White
     Write-Host ""
-    
+    Write-Host "  1. Rebuild & deploy Go server (compile, stop, replace, start)"
+    Write-Host "  2. Compile Go server only (do not deploy)"
+    Write-Host "  3. Build legacy Rust binaries (archived, hbbs/hbbr)"
+    Write-Host "  0. Back to main menu"
+    Write-Host ""
+    $buildChoice = Read-Host "Select option [1]"
+    if ([string]::IsNullOrEmpty($buildChoice)) { $buildChoice = "1" }
+
+    switch ($buildChoice) {
+        "1" { Do-RebuildGoServer }
+        "2" { Do-CompileGoOnly }
+        "3" { Do-BuildLegacyRust }
+        "0" { return }
+        default { Print-Warning "Invalid option"; Start-Sleep -Seconds 1 }
+    }
+}
+
+# Rebuild & deploy Go server: compile → backup → stop → replace → start → verify
+function Do-RebuildGoServer {
+    Print-Header
+    Write-Host "========== REBUILD & DEPLOY GO SERVER ==========" -ForegroundColor White
+    Write-Host ""
+
+    Detect-Installation
+
+    if ($script:INSTALL_STATUS -eq "none") {
+        Print-Warning "BetterDesk is not installed. Binary will be compiled but not deployed."
+        if (-not (Confirm-Action "Continue with compilation only?")) {
+            Press-Enter
+            return
+        }
+        Do-CompileGoOnly
+        return
+    }
+
+    # Step 1: Compile
+    Print-Step "[1/5] Compiling Go server from source..."
+    if (-not (Compile-GoServer)) {
+        Print-Error "Compilation failed - aborting. Current installation is untouched."
+        Press-Enter
+        return
+    }
+
+    $newBinary = Join-Path $script:GO_SERVER_SOURCE "betterdesk-server.exe"
+    if (-not (Test-Path $newBinary)) {
+        Print-Error "Compiled binary not found at $newBinary"
+        Press-Enter
+        return
+    }
+
+    # Step 2: Backup current binary
+    Print-Step "[2/5] Backing up current binary..."
+    $installedBinary = Join-Path $script:RUSTDESK_PATH "betterdesk-server.exe"
+    $ts = Get-Date -Format "yyyyMMdd_HHmmss"
+    $backupPath = "${installedBinary}.backup.${ts}"
+    if (Test-Path $installedBinary) {
+        Copy-Item -Path $installedBinary -Destination $backupPath -Force
+        Print-Info "Backup: $backupPath"
+    } else {
+        Print-Info "No existing binary to backup"
+    }
+
+    # Step 3: Stop services
+    Print-Step "[3/5] Stopping services..."
+    Stop-AllServices
+
+    # Step 4: Replace binary
+    Print-Step "[4/5] Deploying new binary..."
+    if (-not (Test-Path $script:RUSTDESK_PATH)) {
+        New-Item -ItemType Directory -Path $script:RUSTDESK_PATH -Force | Out-Null
+    }
+
+    # Verify file is not locked
+    if (Test-Path $installedBinary) {
+        try {
+            $stream = [System.IO.File]::Open($installedBinary, 'Open', 'ReadWrite', 'None')
+            $stream.Close()
+        } catch {
+            Print-Warning "File is locked, waiting..."
+            Start-Sleep -Seconds 3
+            Get-Process -Name "betterdesk-server" -ErrorAction SilentlyContinue | Stop-Process -Force
+            Start-Sleep -Seconds 2
+        }
+    }
+
+    Copy-Item -Path $newBinary -Destination $installedBinary -Force
+    $size = [math]::Round((Get-Item $installedBinary).Length / 1MB, 2)
+    Print-Success "Deployed: $installedBinary ($size MB)"
+
+    # Step 5: Start services and verify
+    Print-Step "[5/5] Starting services..."
+    Start-ServicesWithVerification
+
+    # Verify
+    Start-Sleep -Seconds 3
+    $serverProcess = Get-Process -Name "betterdesk-server" -ErrorAction SilentlyContinue
+    if ($serverProcess) {
+        Write-Host ""
+        Print-Success "Go server rebuilt and deployed successfully!"
+    } else {
+        Print-Error "Service failed to start after rebuild!"
+        Write-Host ""
+        Write-Host "Rolling back to previous binary..." -ForegroundColor Yellow
+        if (Test-Path $backupPath) {
+            # Stop again
+            Get-Process -Name "betterdesk-server" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+            Copy-Item -Path $backupPath -Destination $installedBinary -Force
+            Start-Services
+            Start-Sleep -Seconds 3
+            $rollbackProcess = Get-Process -Name "betterdesk-server" -ErrorAction SilentlyContinue
+            if ($rollbackProcess) {
+                Print-Success "Rollback successful - previous binary restored"
+            } else {
+                Print-Error "Rollback also failed. Check event log for details."
+            }
+        } else {
+            Print-Error "No backup to rollback to."
+        }
+    }
+
+    Press-Enter
+}
+
+# Compile Go server only (no deployment)
+function Do-CompileGoOnly {
+    Print-Header
+    Write-Host "========== COMPILE GO SERVER ==========" -ForegroundColor White
+    Write-Host ""
+
+    if (-not (Compile-GoServer)) {
+        Print-Error "Compilation failed"
+        Press-Enter
+        return
+    }
+
+    $newBinary = Join-Path $script:GO_SERVER_SOURCE "betterdesk-server.exe"
+    $size = [math]::Round((Get-Item $newBinary).Length / 1MB, 2)
+    Print-Success "Binary compiled: $newBinary ($size MB)"
+    Print-Info "Use option 7 -> 1 to deploy it, or copy manually."
+
+    Press-Enter
+}
+
+# Legacy Rust build (archived - hbbs/hbbr)
+function Do-BuildLegacyRust {
+    Print-Header
+    Write-Host "========== BUILD LEGACY RUST BINARIES ==========" -ForegroundColor White
+    Write-Host ""
+    Print-Warning "Legacy Rust binaries (hbbs/hbbr) are archived."
+    Print-Info "The Go server is the current architecture."
+    Write-Host ""
+    if (-not (Confirm-Action "Continue with legacy Rust build anyway?")) {
+        return
+    }
+
     # Check Rust
     $cargoCmd = Get-Command cargo -ErrorAction SilentlyContinue
     if (-not $cargoCmd) {
@@ -3151,24 +3306,24 @@ function Do-Build {
         Press-Enter
         return
     }
-    
+
     $rustVersion = rustc --version
     Print-Info "Rust: $rustVersion"
     Write-Host ""
-    
+
     $buildDir = Join-Path $env:TEMP "betterdesk_build_$((Get-Date).Ticks)"
     New-Item -ItemType Directory -Path $buildDir -Force | Out-Null
-    
+
     Push-Location $buildDir
-    
+
     try {
         Print-Step "Downloading RustDesk Server sources..."
         git clone --depth 1 --branch 1.1.14 https://github.com/rustdesk/rustdesk-server.git
         Set-Location "rustdesk-server"
         git submodule update --init --recursive
-        
+
         Print-Step "Applying BetterDesk modifications..."
-        
+
         $srcDir = Join-Path $script:ScriptDir "hbbs-patch-v2\src"
         if (Test-Path $srcDir) {
             Copy-Item -Path "$srcDir\main.rs" -Destination "src\main.rs" -Force
@@ -3180,29 +3335,24 @@ function Do-Build {
             Print-Error "Source modifications not found: $srcDir"
             return
         }
-        
+
         Print-Step "Compiling (may take several minutes)..."
         cargo build --release
-        
+
         Print-Step "Copying binaries..."
-        
+
         $outputDir = Join-Path $script:ScriptDir "hbbs-patch-v2"
         Copy-Item -Path "target\release\hbbs.exe" -Destination "$outputDir\hbbs-windows-x86_64.exe" -Force
         Copy-Item -Path "target\release\hbbr.exe" -Destination "$outputDir\hbbr-windows-x86_64.exe" -Force
-        
-        Print-Success "Compilation completed!"
+
+        Print-Success "Legacy Rust compilation completed!"
         Print-Info "Binaries saved in: $outputDir"
-        
+
     } finally {
         Pop-Location
         Remove-Item -Path $buildDir -Recurse -Force -ErrorAction SilentlyContinue
     }
-    
-    Write-Host ""
-    if (Confirm-Action "Install newly compiled binaries?") {
-        Do-Update
-    }
-    
+
     Press-Enter
 }
 
@@ -3565,7 +3715,7 @@ function Show-Menu {
     Write-Host "  4. INSTALLATION VALIDATION"
     Write-Host "  5. Backup"
     Write-Host "  6. Reset admin password"
-    Write-Host "  7. Build binaries"
+    Write-Host "  7. Build & deploy server"
     Write-Host "  8. DIAGNOSTICS"
     Write-Host "  9. UNINSTALL"
     Write-Host ""
