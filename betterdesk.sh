@@ -106,7 +106,7 @@ done
 GO_SERVER_SOURCE="$SCRIPT_DIR/betterdesk-server"
 
 # Minimum Go version required for compilation
-GO_MIN_VERSION="1.21"
+GO_MIN_VERSION="1.25"
 
 # Default paths (can be overridden by environment variables)
 RUSTDESK_PATH="${RUSTDESK_PATH:-}"
@@ -804,7 +804,7 @@ install_golang() {
         return 0
     fi
     
-    local go_version="1.22.1"
+    local go_version="1.25.0"
     local go_arch=""
     
     case "$ARCH_NAME" in

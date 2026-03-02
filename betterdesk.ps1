@@ -94,7 +94,7 @@ $script:POSTGRESQL_PORT = if ($env:POSTGRESQL_PORT) { $env:POSTGRESQL_PORT } els
 
 # Go server configuration
 $script:GO_SERVER_SOURCE = Join-Path $script:ScriptDir "betterdesk-server"
-$script:GO_MIN_VERSION = "1.21"
+$script:GO_MIN_VERSION = "1.25"
 # Legacy Rust checksums (deprecated, kept for migration purposes)
 $script:HBBS_WINDOWS_X86_64_SHA256 = "B790FA44CAC7482A057ED322412F6D178FB33F3B05327BFA753416E9879BD62F"
 $script:HBBR_WINDOWS_X86_64_SHA256 = "368C71E8D3AEF4C5C65177FBBBB99EA045661697A89CB7C2A703759C575E8E9F"
@@ -505,7 +505,7 @@ function Test-GoInstalled {
 function Install-Golang {
     Print-Step "Installing Go toolchain..."
     
-    $goVersion = "1.22.1"
+    $goVersion = "1.25.0"
     $goUrl = "https://go.dev/dl/go$goVersion.windows-amd64.zip"
     $goZip = Join-Path $env:TEMP "go$goVersion.zip"
     $goRoot = "C:\Go"
