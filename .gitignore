@@ -73,8 +73,12 @@ hbbr-v[0-7]-patched
 
 # Sensitive data (should never be committed)
 *credentials*
-*password*
-*secret*
+*.password
+*.passwords
+*_password.txt
+*_password.log
+*secret*.key
+*secret*.pem
 .env
 config.local.*
 
@@ -123,16 +127,18 @@ htmlcov/
 .pytest_cache/
 test_*.sh
 
-# Dev scripts with potential sensitive data (instance keys, signatures, IDs)
+# Dev scripts (removed — old Flask/Rust-era utilities, not needed for production)
+dev_modules/
+scripts/legacy/
+migrations/
+templates/
+test_api.sh
+build_windows.sh
+
+# Dev scripts with potential sensitive data
 web-nodejs/_test_*.sh
 web-nodejs/_fix_*.sh
-dev_modules/verify_nacl.py
-dev_modules/verify_signature.py
-dev_modules/verify_e2e_signature.py
 _write_readme.py
-
-# Experimental/Dev-only (not ready for production)
-dev_modules/betterdesk-builder/
 
 # BetterDesk Desktop Client (development paused — using RustDesk client instead)
 betterdesk-client/
