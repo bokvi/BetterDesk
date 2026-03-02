@@ -1341,7 +1341,7 @@ function Setup-Services {
     
     # BetterDesk Go Server (single binary: signal + relay + API)
     $serverExe = Join-Path $script:RUSTDESK_PATH "betterdesk-server.exe"
-    $serverArgs = "-mode all -relay $serverIP $dbArg -key-file `"$script:RUSTDESK_PATH\id_ed25519`" -api-port $script:API_PORT"
+    $serverArgs = "-mode all -relay-servers $serverIP $dbArg -key-file `"$script:RUSTDESK_PATH\id_ed25519`" -api-port $script:API_PORT"
     
     # Add TLS flags if certificates exist
     $sslDir = Join-Path $script:RUSTDESK_PATH "ssl"
@@ -1412,7 +1412,7 @@ function Setup-ScheduledTasks {
     
     # BetterDesk Go Server Task
     $serverExe = Join-Path $script:RUSTDESK_PATH "betterdesk-server.exe"
-    $serverArgs = "-mode all -relay $ServerIP $dbArg -key-file `"$script:RUSTDESK_PATH\id_ed25519`" -api-port $script:API_PORT"
+    $serverArgs = "-mode all -relay-servers $ServerIP $dbArg -key-file `"$script:RUSTDESK_PATH\id_ed25519`" -api-port $script:API_PORT"
     
     # Add TLS flags if certificates exist
     $sslDir = Join-Path $script:RUSTDESK_PATH "ssl"
