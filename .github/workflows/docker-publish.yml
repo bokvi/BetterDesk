@@ -74,3 +74,19 @@ jobs:
           platforms: linux/amd64,linux/arm64
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+
+  make-public:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - name: Make all packages public
+        run: |
+          for pkg in betterdesk betterdesk-server betterdesk-console; do
+            gh api orgs/${{ github.repository_owner }}/packages/container/$pkg \
+              -X PATCH -f visibility=public || true
+          done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
