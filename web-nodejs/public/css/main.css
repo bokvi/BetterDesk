@@ -1075,3 +1075,8 @@ table {
         max-width: none;
     }
 }
+
+/* Sidebar logo sizing */
+.sidebar-logo-svg { display: flex; align-items: center; }
+.sidebar-logo-svg svg { height: 36px; width: auto; max-width: 100%; }
+.sidebar-logo-img { max-height: 32px; width: auto; }

@@ -230,3 +230,8 @@
 .totp-back-link a:hover {
     text-decoration: underline;
 }
+
+/* Login logo sizing */
+.login-logo-svg { display: flex; align-items: center; justify-content: center; }
+.login-logo-svg svg { height: 48px; width: auto; max-width: 100%; }
+.login-logo-img { max-height: 48px; width: auto; }

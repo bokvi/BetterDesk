@@ -751,37 +751,15 @@
     color: var(--text-primary);
 }
 
-.logo-preview-svg,
-.sidebar-logo-svg,
-.login-logo-svg {
+.logo-preview-svg {
     display: flex;
     align-items: center;
 }
 
-.logo-preview-svg svg,
-.sidebar-logo-svg svg,
-.login-logo-svg svg {
+.logo-preview-svg svg {
     height: 36px;
     width: auto;
     max-width: 100%;
-}
-
-.login-logo-svg {
-    justify-content: center;
-}
-
-.login-logo-svg svg {
-    height: 48px;
-}
-
-.login-logo-img {
-    max-height: 48px;
-    width: auto;
-}
-
-.sidebar-logo-img {
-    max-height: 32px;
-    width: auto;
 }
 
 /* Logo file upload */
