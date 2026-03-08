@@ -17,7 +17,7 @@
 #   21121 - RustDesk Client API (Node.js, WAN-facing)
 
 # ============= Stage 1: Build Go server =============
-FROM golang:1.24-alpine AS go-builder
+FROM golang:1.25-alpine AS go-builder
 
 RUN apk add --no-cache git gcc musl-dev sqlite-dev
 
